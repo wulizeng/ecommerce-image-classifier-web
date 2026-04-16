@@ -52,20 +52,16 @@ function openConfig(canCancel) {
 }
 
 function closeConfig() {
-  if (!configCanClose) return
   overlay.classList.add('hidden')
 }
 
-// 点击遮罩背景时只有可关闭状态才关闭
 overlay.addEventListener('click', (e) => {
-  if (e.target === overlay && configCanClose) {
-    closeConfig()
-  }
+  if (e.target === overlay) closeConfig()
 })
 
 // 首次打开检测配置
 if (!loadConfig()) {
-  openConfig(false)
+  openConfig(true)
 }
 
 toggleKeyBtn.addEventListener('click', () => {
@@ -124,6 +120,14 @@ function setTaskRunning(running) {
   document.getElementById('reset-btn').disabled = running
 }
 
+function checkConfig() {
+  if (!loadConfig()) {
+    openConfig(true)
+    return false
+  }
+  return true
+}
+
 // ── 单条模式 ──────────────────────────────────────────
 let singleAbortController = null
 
@@ -133,6 +137,7 @@ document.getElementById('single-btn').addEventListener('click', async () => {
   const btn = document.getElementById('single-btn')
   const cancelBtn = document.getElementById('single-cancel-btn')
   if (!url) return
+  if (!checkConfig()) return
   btn.disabled = true
   cancelBtn.classList.remove('hidden')
   setTaskRunning(true)
@@ -195,6 +200,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
   const cancelBtn = document.getElementById('batch-cancel-btn')
 
   if (!fileInput.files[0]) { alert('请先选择 Excel 文件'); return }
+  if (!checkConfig()) return
 
   batchAbortController = new AbortController()
   btn.disabled = true
