@@ -1,5 +1,5 @@
 // Railway 后端地址，部署后替换为实际域名
-const API_BASE = 'https://your-app.railway.app'
+const API_BASE = 'https://ecommerce-image-classifier-web-production.up.railway.app'
 
 // ── 配置管理 ──────────────────────────────────────────
 const CONFIG_KEY = 'eic_config'
