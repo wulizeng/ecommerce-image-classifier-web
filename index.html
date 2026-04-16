@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https:; img-src * data:; connect-src *">
+  <title>电商图片人物识别</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 配置对话框遮罩 -->
+  <div id="config-overlay" class="config-overlay hidden">
+    <div class="config-dialog">
+      <h2>配置</h2>
+      <p class="field-label">API Key</p>
+      <div class="key-row">
+        <input type="password" id="config-api-key" placeholder="请输入 API Key..." />
+        <button class="toggle-btn" id="toggle-key-btn">显示</button>
+      </div>
+      <p class="field-label">模型名称</p>
+      <input type="text" id="config-model" placeholder="qwen3.5-plus" />
+      <p class="field-label">API Base URL</p>
+      <input type="text" id="config-base-url" placeholder="https://..." />
+      <p class="error-msg hidden" id="config-error">请填写所有必填项</p>
+      <div class="actions">
+        <button class="btn-cancel hidden" id="config-cancel-btn">取消</button>
+        <button class="btn-save" id="config-save-btn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="title-row">
+      <h1>电商链接图片人物识别</h1>
+      <div class="title-row-btns">
+        <button id="settings-btn" class="reset-btn">设置</button>
+        <button id="reset-btn" class="reset-btn">刷新</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="single">单条模式</button>
+      <button class="tab" data-tab="batch">批量模式</button>
+    </div>
+
+    <div id="single-panel" class="panel">
+      <div class="input-row">
+        <input type="text" id="single-url" placeholder="粘贴图片 URL..." />
+        <button id="single-cancel-btn" class="cancel-btn hidden">终止</button>
+        <button id="single-btn">识别</button>
+      </div>
+      <div id="single-result"></div>
+    </div>
+
+    <div id="batch-panel" class="panel hidden">
+      <div class="batch-toolbar">
+        <input type="file" id="batch-file" accept=".xlsx" />
+        <div class="batch-actions">
+          <button id="batch-cancel-btn" class="cancel-btn hidden">终止</button>
+          <button id="batch-btn">开始批量识别</button>
+        </div>
+      </div>
+      <div id="batch-progress" class="hidden">
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <div class="progress-stats">
+          <span id="progress-count">已处理 0/0</span>
+          <span id="progress-success" class="stat-success">成功 0</span>
+          <span id="progress-fail" class="stat-fail">失败 0</span>
+          <span id="progress-time">耗时 0s</span>
+        </div>
+      </div>
+      <div id="batch-result"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
