@@ -34,7 +34,10 @@ const configError = document.getElementById('config-error')
 const configCancelBtn = document.getElementById('config-cancel-btn')
 const toggleKeyBtn = document.getElementById('toggle-key-btn')
 
+let configCanClose = false
+
 function openConfig(canCancel) {
+  configCanClose = canCancel
   const cfg = loadConfig()
   if (cfg) {
     apiKeyInput.value = cfg.apiKey || ''
@@ -49,8 +52,16 @@ function openConfig(canCancel) {
 }
 
 function closeConfig() {
+  if (!configCanClose) return
   overlay.classList.add('hidden')
 }
+
+// 点击遮罩背景时只有可关闭状态才关闭
+overlay.addEventListener('click', (e) => {
+  if (e.target === overlay && configCanClose) {
+    closeConfig()
+  }
+})
 
 // 首次打开检测配置
 if (!loadConfig()) {
