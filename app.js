@@ -185,7 +185,9 @@ document.getElementById('single-cancel-btn').addEventListener('click', () => {
 })
 
 // ── 批量模式 ──────────────────────────────────────────
-let batchAbortController = null
+const BATCH_SIZE = 3  // 每批识别条数
+
+let batchCancelled = false
 
 document.getElementById('batch-btn').addEventListener('click', async () => {
   const fileInput = document.getElementById('batch-file')
@@ -202,7 +204,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
   if (!fileInput.files[0]) { alert('请先选择 Excel 文件'); return }
   if (!checkConfig()) return
 
-  batchAbortController = new AbortController()
+  batchCancelled = false
   btn.disabled = true
   cancelBtn.classList.remove('hidden')
   setTaskRunning(true)
@@ -220,69 +222,92 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
     progressTime.textContent = `耗时 ${Math.floor((Date.now() - startTime) / 1000)}s`
   }, 1000)
 
-  const formData = new FormData()
-  formData.append('file', fileInput.files[0])
-
   let successCount = 0
   let failCount = 0
 
   try {
-    const resp = await fetch(api('/api/batch/stream'), {
+    // Step 1: 上传 Excel，获取所有行数据
+    const formData = new FormData()
+    formData.append('file', fileInput.files[0])
+    const uploadResp = await fetch(api('/api/upload'), {
       method: 'POST',
-      headers: getHeaders(),
-      body: formData,
-      signal: batchAbortController.signal
+      body: formData
     })
-    if (!resp.ok) {
-      clearInterval(timer)
-      const data = await resp.json()
-      resultDiv.innerHTML = `<p class="error-msg">${data.error}</p>`
+    if (!uploadResp.ok) {
+      const d = await uploadResp.json()
+      resultDiv.innerHTML = `<p class="error-msg">${d.error}</p>`
       return
     }
+    const uploadData = await uploadResp.json()
+    const { session_key, total, rows } = uploadData
 
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop()
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data:')) continue
-        let event
-        try { event = JSON.parse(trimmed.slice(5).trim()) } catch { continue }
-
-        if (event.done) {
-          clearInterval(timer)
-          progressTime.textContent = `耗时 ${((Date.now() - startTime) / 1000).toFixed(1)}s`
-          progressFill.style.width = '100%'
-          const downloadUrl = api(`/api/download?session_key=${encodeURIComponent(event.session_key)}`)
-          resultDiv.innerHTML = `
-            <button class="download-btn" id="download-btn">下载结果 Excel</button>
-            <p class="download-tip hidden" id="download-tip">结果文件已开始下载，请在下载目录查看</p>
-          `
-          document.getElementById('download-btn').addEventListener('click', () => {
-            window.location.href = downloadUrl
-            document.getElementById('download-tip').classList.remove('hidden')
-          })
-        } else {
-          const { index, total, status } = event
-          if (status === '成功') successCount++
-          else { failCount++; progressFail.classList.add('has-error') }
-          progressCount.textContent = `已处理 ${index}/${total}`
-          progressSuccess.textContent = `成功 ${successCount}`
-          progressFail.textContent = `失败 ${failCount}`
-          progressFill.style.width = `${Math.round(index / total * 100)}%`
-        }
+    // Step 2: 分批识别
+    const processed = new Array(total)
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      if (batchCancelled) {
+        resultDiv.innerHTML = `<p class="error-msg">已取消任务</p>`
+        return
       }
+      const batchRows = rows.slice(i, i + BATCH_SIZE)
+      const items = batchRows.map((row, offset) => ({
+        index: i + offset,
+        url: row['链接'] || '',
+        row
+      }))
+
+      const batchResp = await fetch(api('/api/classify-batch'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getHeaders() },
+        body: JSON.stringify({ items })
+      })
+      if (!batchResp.ok) {
+        const d = await batchResp.json()
+        resultDiv.innerHTML = `<p class="error-msg">识别失败: ${d.error}</p>`
+        return
+      }
+      const batchData = await batchResp.json()
+
+      for (const r of batchData.results) {
+        processed[r.index] = { ...r.row, label: r.label, status: r.status }
+        if (r.status === '成功') successCount++
+        else { failCount++; progressFail.classList.add('has-error') }
+      }
+
+      const doneCount = Math.min(i + BATCH_SIZE, total)
+      progressCount.textContent = `已处理 ${doneCount}/${total}`
+      progressSuccess.textContent = `成功 ${successCount}`
+      progressFail.textContent = `失败 ${failCount}`
+      progressFill.style.width = `${Math.round(doneCount / total * 100)}%`
     }
+
+    // Step 3: 生成结果 Excel
+    const finalResp = await fetch(api('/api/finalize'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_key, processed: processed.filter(Boolean) })
+    })
+    if (!finalResp.ok) {
+      const d = await finalResp.json()
+      resultDiv.innerHTML = `<p class="error-msg">生成文件失败: ${d.error}</p>`
+      return
+    }
+    const finalData = await finalResp.json()
+
+    clearInterval(timer)
+    progressTime.textContent = `耗时 ${((Date.now() - startTime) / 1000).toFixed(1)}s`
+    progressFill.style.width = '100%'
+    const downloadUrl = api(`/api/download?session_key=${encodeURIComponent(finalData.session_key)}`)
+    resultDiv.innerHTML = `
+      <button class="download-btn" id="download-btn">下载结果 Excel</button>
+      <p class="download-tip hidden" id="download-tip">结果文件已开始下载，请在下载目录查看</p>
+    `
+    document.getElementById('download-btn').addEventListener('click', () => {
+      window.location.href = downloadUrl
+      document.getElementById('download-tip').classList.remove('hidden')
+    })
   } catch (e) {
     clearInterval(timer)
-    if (e.name === 'AbortError') {
+    if (batchCancelled) {
       resultDiv.innerHTML = `<p class="error-msg">已取消任务</p>`
     } else {
       resultDiv.innerHTML = `<p class="error-msg">请求失败: ${e.message}</p>`
@@ -290,11 +315,10 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false
     cancelBtn.classList.add('hidden')
-    batchAbortController = null
     setTaskRunning(false)
   }
 })
 
 document.getElementById('batch-cancel-btn').addEventListener('click', () => {
-  if (batchAbortController) batchAbortController.abort()
+  batchCancelled = true
 })
