@@ -82,6 +82,8 @@ def batch_stream():
         processed = []
         total = len(rows)
         for i, row in enumerate(rows, start=1):
+            # 发送心跳保持连接
+            yield ": ping\n\n"
             image_url = row.get('链接', '').strip()
             if not image_url:
                 item = {**row, 'label': '', 'status': '失败: 链接为空'}
