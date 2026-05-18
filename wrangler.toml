@@ -1,0 +1,9 @@
+# worker/wrangler.toml
+name = "ecommerce-image-classifier-logger"
+main = "index.js"
+compatibility_date = "2026-05-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ecommerce-image"
+database_id = ""  # filled after `wrangler d1 create`
