@@ -1,31 +1,76 @@
-// Railway 后端地址，部署后替换为实际域名
-const API_BASE = 'https://ecommerce-image-classifier-web-production.up.railway.app'
-
-// ── 配置管理 ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
+// 配置管理 (localStorage, 7 天过期)
+// ═══════════════════════════════════════════════════════
 const CONFIG_KEY = 'eic_config'
+const CONFIG_MAX_AGE = 7 * 24 * 60 * 60 * 1000  // 7 天
+
+// Cloudflare Worker 日志地址（部署后替换为实际 URL）
+const LOG_URL = 'https://your-worker.your-subdomain.workers.dev/log'
 
 function loadConfig() {
-  try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null') } catch { return null }
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY)
+    if (!raw) return null
+    const cfg = JSON.parse(raw)
+    if (Date.now() - (cfg.savedAt || 0) > CONFIG_MAX_AGE) {
+      localStorage.removeItem(CONFIG_KEY)
+      return null
+    }
+    return cfg
+  } catch { return null }
 }
 
 function saveConfig(cfg) {
+  cfg.savedAt = Date.now()
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg))
 }
 
 function getHeaders() {
   const cfg = loadConfig() || {}
   return {
-    'X-Api-Key': cfg.apiKey || '',
-    'X-Model': cfg.model || 'qwen3.5-plus',
-    'X-Base-Url': cfg.baseUrl || ''
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${cfg.apiKey || ''}`
   }
 }
 
-function api(path) {
-  return `${API_BASE}${path}`
+function classifyUrl(url, signal) {
+  const cfg = loadConfig()
+  return fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      model: cfg.model || 'qwen3.5-plus',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url } },
+          { type: 'text', text: '请判断这张商品图片中是否有人物模特（真人或仿真人模特）。只回答"模特图"或"静态图"，不要其他内容。有人物则回答"模特图"，没有人物则回答"静态图"。' }
+        ]
+      }]
+    }),
+    signal
+  })
 }
 
-// ── 配置对话框 ────────────────────────────────────────
+async function logUsage(action, count, result) {
+  try {
+    await fetch(LOG_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        timestamp: Date.now(),
+        action,
+        count,
+        result
+      }),
+      keepalive: true
+    })
+  } catch { /* 日志失败静默忽略 */ }
+}
+
+// ═══════════════════════════════════════════════════════
+// 配置对话框
+// ═══════════════════════════════════════════════════════
 const overlay = document.getElementById('config-overlay')
 const apiKeyInput = document.getElementById('config-api-key')
 const modelInput = document.getElementById('config-model')
@@ -87,10 +132,11 @@ document.getElementById('config-save-btn').addEventListener('click', () => {
 })
 
 configCancelBtn.addEventListener('click', closeConfig)
-
 document.getElementById('settings-btn').addEventListener('click', () => openConfig(true))
 
-// ── 标签切换 ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
+// 标签切换 & 刷新
+// ═══════════════════════════════════════════════════════
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
@@ -100,7 +146,6 @@ document.querySelectorAll('.tab').forEach(tab => {
   })
 })
 
-// ── 刷新按钮 ──────────────────────────────────────────
 document.getElementById('reset-btn').addEventListener('click', () => {
   document.getElementById('single-url').value = ''
   document.getElementById('single-result').innerHTML = ''
@@ -128,7 +173,9 @@ function checkConfig() {
   return true
 }
 
-// ── 单条模式 ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
+// 单条模式
+// ═══════════════════════════════════════════════════════
 let singleAbortController = null
 
 document.getElementById('single-btn').addEventListener('click', async () => {
@@ -138,39 +185,43 @@ document.getElementById('single-btn').addEventListener('click', async () => {
   const cancelBtn = document.getElementById('single-cancel-btn')
   if (!url) return
   if (!checkConfig()) return
+
   btn.disabled = true
   cancelBtn.classList.remove('hidden')
   setTaskRunning(true)
   resultDiv.innerHTML = '<p>识别中...</p>'
   const t0 = Date.now()
   singleAbortController = new AbortController()
+
   try {
-    const resp = await fetch(api('/api/single'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getHeaders() },
-      body: JSON.stringify({ url }),
-      signal: singleAbortController.signal
-    })
-    const data = await resp.json()
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+    const resp = await classifyUrl(url, singleAbortController.signal)
     if (!resp.ok) {
-      resultDiv.innerHTML = `<p class="error-msg">${data.error}</p>`
+      const data = await resp.json()
+      const msg = data.error?.message || data.error || '识别失败'
+      resultDiv.innerHTML = `<p class="error-msg">${msg}</p>`
+      logUsage('classify', 1, 'error')
       return
     }
+    const data = await resp.json()
+    const answer = data.choices[0].message.content.trim()
+    const label = answer.includes('模特') ? '模特图' : '静态图'
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
     resultDiv.innerHTML = `
       <div class="single-result-card">
         <div class="single-result-info">
-          <span class="label ${data.label === '模特图' ? 'model' : 'static'}">${data.label}</span>
+          <span class="label ${label === '模特图' ? 'model' : 'static'}">${label}</span>
           <span class="elapsed-text">识别耗时 ${elapsed}s</span>
         </div>
-        <img src="${data.url}" alt="图片">
+        <img src="${url}" alt="图片">
       </div>
     `
+    logUsage('classify', 1, 'success')
   } catch (e) {
     if (e.name === 'AbortError') {
-      resultDiv.innerHTML = `<p class="error-msg">已取消</p>`
+      resultDiv.innerHTML = '<p class="error-msg">已取消</p>'
     } else {
       resultDiv.innerHTML = `<p class="error-msg">请求失败: ${e.message}</p>`
+      logUsage('classify', 1, 'error')
     }
   } finally {
     btn.disabled = false
@@ -184,9 +235,10 @@ document.getElementById('single-cancel-btn').addEventListener('click', () => {
   if (singleAbortController) singleAbortController.abort()
 })
 
-// ── 批量模式 ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
+// 批量模式
+// ═══════════════════════════════════════════════════════
 const BATCH_SIZE = 3  // 每批识别条数
-
 let batchCancelled = false
 
 document.getElementById('batch-btn').addEventListener('click', async () => {
@@ -224,93 +276,110 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
 
   let successCount = 0
   let failCount = 0
+  let total = 0
+  let results = []
 
   try {
-    // Step 1: 上传 Excel，获取所有行数据
-    const formData = new FormData()
-    formData.append('file', fileInput.files[0])
-    const uploadResp = await fetch(api('/api/upload'), {
-      method: 'POST',
-      body: formData
-    })
-    if (!uploadResp.ok) {
-      const d = await uploadResp.json()
-      resultDiv.innerHTML = `<p class="error-msg">${d.error}</p>`
+    // Step 1: 用 SheetJS 解析 Excel
+    const file = fileInput.files[0]
+    const arrayBuffer = await file.arrayBuffer()
+    const workbook = XLSX.read(arrayBuffer)
+    const sheetName = workbook.SheetNames[0]
+    const sheet = workbook.Sheets[sheetName]
+    const rows = XLSX.utils.sheet_to_json(sheet)
+
+    if (!rows || rows.length === 0) {
+      resultDiv.innerHTML = '<p class="error-msg">Excel 文件中没有数据行</p>'
+      logUsage('batch', 0, 'error')
       return
     }
-    const uploadData = await uploadResp.json()
-    const { session_key, total, rows } = uploadData
+
+    total = rows.length
 
     // Step 2: 分批识别
-    const processed = new Array(total)
     for (let i = 0; i < total; i += BATCH_SIZE) {
       if (batchCancelled) {
-        resultDiv.innerHTML = `<p class="error-msg">已取消任务</p>`
+        resultDiv.innerHTML = '<p class="error-msg">已取消任务</p>'
+        logUsage('batch', i, 'error')
         return
       }
+
       const batchRows = rows.slice(i, i + BATCH_SIZE)
-      const items = batchRows.map((row, offset) => ({
-        index: i + offset,
-        url: row['链接'] || '',
-        row
-      }))
 
-      const batchResp = await fetch(api('/api/classify-batch'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getHeaders() },
-        body: JSON.stringify({ items })
-      })
-      if (!batchResp.ok) {
-        const d = await batchResp.json()
-        resultDiv.innerHTML = `<p class="error-msg">识别失败: ${d.error}</p>`
-        return
+      for (let j = 0; j < batchRows.length; j++) {
+        const row = batchRows[j]
+        const imageUrl = String(row['链接'] || '').trim()
+        const label = row['款号'] || ''
+        const spu = row['SPU'] || ''
+        const skuid = row['SKUID'] || ''
+
+        if (!imageUrl) {
+          results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 链接为空' })
+          failCount++
+          continue
+        }
+
+        try {
+          const resp = await classifyUrl(imageUrl)
+          if (!resp.ok) {
+            const data = await resp.json()
+            const msg = data.error?.message || data.error || '识别失败'
+            results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': `失败: ${msg}` })
+            failCount++
+          } else {
+            const data = await resp.json()
+            const answer = data.choices[0].message.content.trim()
+            const itemLabel = answer.includes('模特') ? '模特图' : '静态图'
+            results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': itemLabel, '处理状态': '成功' })
+            successCount++
+          }
+        } catch {
+          results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 网络错误' })
+          failCount++
+        }
+
+        const doneCount = i + j + 1
+        progressCount.textContent = `已处理 ${doneCount}/${total}`
+        progressSuccess.textContent = `成功 ${successCount}`
+        progressFail.textContent = `失败 ${failCount}`
+        progressFail.classList.toggle('has-error', failCount > 0)
+        progressFill.style.width = `${Math.round(doneCount / total * 100)}%`
       }
-      const batchData = await batchResp.json()
-
-      for (const r of batchData.results) {
-        processed[r.index] = { ...r.row, label: r.label, status: r.status }
-        if (r.status === '成功') successCount++
-        else { failCount++; progressFail.classList.add('has-error') }
-      }
-
-      const doneCount = Math.min(i + BATCH_SIZE, total)
-      progressCount.textContent = `已处理 ${doneCount}/${total}`
-      progressSuccess.textContent = `成功 ${successCount}`
-      progressFail.textContent = `失败 ${failCount}`
-      progressFill.style.width = `${Math.round(doneCount / total * 100)}%`
     }
 
     // Step 3: 生成结果 Excel
-    const finalResp = await fetch(api('/api/finalize'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_key, processed: processed.filter(Boolean) })
-    })
-    if (!finalResp.ok) {
-      const d = await finalResp.json()
-      resultDiv.innerHTML = `<p class="error-msg">生成文件失败: ${d.error}</p>`
-      return
-    }
-    const finalData = await finalResp.json()
-
     clearInterval(timer)
+    const resultSheet = XLSX.utils.json_to_sheet(results)
+    const resultWorkbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(resultWorkbook, resultSheet, '识别结果')
+    const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const fileName = `识别结果_${timestamp}.xlsx`
+    const blob = XLSX.write(resultWorkbook, { bookType: 'xlsx', type: 'array' })
+    const blobObj = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const downloadUrl = URL.createObjectURL(blobObj)
+
+    const a = document.createElement('a')
+    a.href = downloadUrl
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(downloadUrl)
+
     progressTime.textContent = `耗时 ${((Date.now() - startTime) / 1000).toFixed(1)}s`
     progressFill.style.width = '100%'
-    const downloadUrl = api(`/api/download?session_key=${encodeURIComponent(finalData.session_key)}`)
     resultDiv.innerHTML = `
-      <button class="download-btn" id="download-btn">下载结果 Excel</button>
-      <p class="download-tip hidden" id="download-tip">结果文件已开始下载，请在下载目录查看</p>
+      <p class="download-tip" style="color: #34d399; margin-top: 16px;">结果文件已开始下载，请在下载目录查看</p>
+      <p style="color: #64748b; font-size: 13px;">成功 ${successCount} / 失败 ${failCount}</p>
     `
-    document.getElementById('download-btn').addEventListener('click', () => {
-      window.location.href = downloadUrl
-      document.getElementById('download-tip').classList.remove('hidden')
-    })
+    logUsage('batch', total, failCount === 0 ? 'success' : 'error')
   } catch (e) {
     clearInterval(timer)
     if (batchCancelled) {
-      resultDiv.innerHTML = `<p class="error-msg">已取消任务</p>`
+      resultDiv.innerHTML = '<p class="error-msg">已取消任务</p>'
     } else {
       resultDiv.innerHTML = `<p class="error-msg">请求失败: ${e.message}</p>`
+      logUsage('batch', 0, 'error')
     }
   } finally {
     btn.disabled = false
@@ -322,3 +391,8 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
 document.getElementById('batch-cancel-btn').addEventListener('click', () => {
   batchCancelled = true
 })
+
+// ═══════════════════════════════════════════════════════
+// 页面加载日志
+// ═══════════════════════════════════════════════════════
+logUsage('visit', 0, 'success')
