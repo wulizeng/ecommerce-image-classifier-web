@@ -54,7 +54,6 @@ function classifyUrl(url, signal) {
 
 function logUsage(action, count, result) {
   if (!LOG_URL) return
-  const cfg = loadConfig() || {}
   fetch(LOG_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -62,8 +61,7 @@ function logUsage(action, count, result) {
       timestamp: Date.now(),
       action,
       count,
-      result,
-      device_name: cfg.deviceName || ''
+      result
     })
   }).catch(() => {})
 }
@@ -75,7 +73,6 @@ const overlay = document.getElementById('config-overlay')
 const apiKeyInput = document.getElementById('config-api-key')
 const modelInput = document.getElementById('config-model')
 const baseUrlInput = document.getElementById('config-base-url')
-const deviceInput = document.getElementById('config-device')
 const configError = document.getElementById('config-error')
 const configCancelBtn = document.getElementById('config-cancel-btn')
 const toggleKeyBtn = document.getElementById('toggle-key-btn')
@@ -86,7 +83,6 @@ function openConfig(canCancel) {
     apiKeyInput.value = cfg.apiKey || ''
     modelInput.value = cfg.model || 'qwen3.5-plus'
     baseUrlInput.value = cfg.baseUrl || ''
-    deviceInput.value = cfg.deviceName || ''
   } else {
     modelInput.value = 'qwen3.5-plus'
   }
@@ -126,7 +122,7 @@ document.getElementById('config-save-btn').addEventListener('click', () => {
     configError.classList.remove('hidden')
     return
   }
-  saveConfig({ apiKey, model, baseUrl, deviceName: deviceInput.value.trim() })
+  saveConfig({ apiKey, model, baseUrl })
   closeConfig()
 })
 
