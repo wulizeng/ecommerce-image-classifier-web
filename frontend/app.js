@@ -61,7 +61,8 @@ function logUsage(action, count, result) {
       timestamp: Date.now(),
       action,
       count,
-      result
+      result,
+      device_name: navigator.platform || 'unknown'
     })
   }).catch(() => {})
 }
