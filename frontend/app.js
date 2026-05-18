@@ -52,20 +52,17 @@ function classifyUrl(url, signal) {
   })
 }
 
-async function logUsage(action, count, result) {
-  try {
-    await fetch(LOG_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        timestamp: Date.now(),
-        action,
-        count,
-        result
-      }),
-      keepalive: true
+function logUsage(action, count, result) {
+  fetch(LOG_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      timestamp: Date.now(),
+      action,
+      count,
+      result
     })
-  } catch { /* 日志失败静默忽略 */ }
+  }).catch(() => {})
 }
 
 // ═══════════════════════════════════════════════════════
@@ -79,10 +76,7 @@ const configError = document.getElementById('config-error')
 const configCancelBtn = document.getElementById('config-cancel-btn')
 const toggleKeyBtn = document.getElementById('toggle-key-btn')
 
-let configCanClose = false
-
 function openConfig(canCancel) {
-  configCanClose = canCancel
   const cfg = loadConfig()
   if (cfg) {
     apiKeyInput.value = cfg.apiKey || ''
@@ -198,12 +192,15 @@ document.getElementById('single-btn').addEventListener('click', async () => {
     if (!resp.ok) {
       const data = await resp.json()
       const msg = data.error?.message || data.error || '识别失败'
-      resultDiv.innerHTML = `<p class="error-msg">${msg}</p>`
+      const p = document.createElement('p')
+      p.className = 'error-msg'
+      p.textContent = msg
+      resultDiv.replaceChildren(p)
       logUsage('classify', 1, 'error')
       return
     }
     const data = await resp.json()
-    const answer = data.choices[0].message.content.trim()
+    const answer = data.choices?.[0]?.message?.content?.trim() || ''
     const label = answer.includes('模特') ? '模特图' : '静态图'
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
     resultDiv.innerHTML = `
@@ -220,7 +217,10 @@ document.getElementById('single-btn').addEventListener('click', async () => {
     if (e.name === 'AbortError') {
       resultDiv.innerHTML = '<p class="error-msg">已取消</p>'
     } else {
-      resultDiv.innerHTML = `<p class="error-msg">请求失败: ${e.message}</p>`
+      const p = document.createElement('p')
+      p.className = 'error-msg'
+      p.textContent = `请求失败: ${e.message}`
+      resultDiv.replaceChildren(p)
       logUsage('classify', 1, 'error')
     }
   } finally {
@@ -239,7 +239,7 @@ document.getElementById('single-cancel-btn').addEventListener('click', () => {
 // 批量模式
 // ═══════════════════════════════════════════════════════
 const BATCH_SIZE = 3  // 每批识别条数
-let batchCancelled = false
+let batchAbortController = null
 
 document.getElementById('batch-btn').addEventListener('click', async () => {
   const fileInput = document.getElementById('batch-file')
@@ -256,6 +256,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
   if (!fileInput.files[0]) { alert('请先选择 Excel 文件'); return }
   if (!checkConfig()) return
 
+  batchAbortController = new AbortController()
   batchCancelled = false
   btn.disabled = true
   cancelBtn.classList.remove('hidden')
@@ -289,6 +290,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
     const rows = XLSX.utils.sheet_to_json(sheet)
 
     if (!rows || rows.length === 0) {
+      clearInterval(timer)
       resultDiv.innerHTML = '<p class="error-msg">Excel 文件中没有数据行</p>'
       logUsage('batch', 0, 'error')
       return
@@ -307,34 +309,46 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
       const batchRows = rows.slice(i, i + BATCH_SIZE)
 
       for (let j = 0; j < batchRows.length; j++) {
+        if (batchCancelled) {
+          resultDiv.innerHTML = '<p class="error-msg">已取消任务</p>'
+          logUsage('batch', i + j, 'error')
+          return
+        }
+
         const row = batchRows[j]
         const imageUrl = String(row['链接'] || '').trim()
         const label = row['款号'] || ''
         const spu = row['SPU'] || ''
+        const skc = row['SKC'] || ''
         const skuid = row['SKUID'] || ''
 
         if (!imageUrl) {
-          results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 链接为空' })
+          results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 链接为空' })
           failCount++
           continue
         }
 
         try {
-          const resp = await classifyUrl(imageUrl)
+          const resp = await classifyUrl(imageUrl, batchAbortController.signal)
           if (!resp.ok) {
             const data = await resp.json()
             const msg = data.error?.message || data.error || '识别失败'
-            results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': `失败: ${msg}` })
+            results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': `失败: ${msg}` })
             failCount++
           } else {
             const data = await resp.json()
-            const answer = data.choices[0].message.content.trim()
+            const answer = data.choices?.[0]?.message?.content?.trim() || ''
             const itemLabel = answer.includes('模特') ? '模特图' : '静态图'
-            results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': itemLabel, '处理状态': '成功' })
+            results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': itemLabel, '处理状态': '成功' })
             successCount++
           }
-        } catch {
-          results.push({ '款号': label, 'SPU': spu, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 网络错误' })
+        } catch (e) {
+          if (e.name === 'AbortError') {
+            resultDiv.innerHTML = '<p class="error-msg">已取消任务</p>'
+            logUsage('batch', i + j, 'error')
+            return
+          }
+          results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 网络错误' })
           failCount++
         }
 
@@ -382,6 +396,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
       logUsage('batch', 0, 'error')
     }
   } finally {
+    batchAbortController = null
     btn.disabled = false
     cancelBtn.classList.add('hidden')
     setTaskRunning(false)
@@ -390,6 +405,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
 
 document.getElementById('batch-cancel-btn').addEventListener('click', () => {
   batchCancelled = true
+  if (batchAbortController) batchAbortController.abort()
 })
 
 // ═══════════════════════════════════════════════════════
