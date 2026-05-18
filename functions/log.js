@@ -1,7 +1,6 @@
 export async function onRequest(context) {
   const { request, env } = context
 
-  // CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -24,7 +23,7 @@ export async function onRequest(context) {
 
   try {
     const body = await request.json()
-    const { timestamp, action, count, result } = body
+    const { timestamp, action, count, result, device_name } = body
 
     if (!['visit', 'classify', 'batch'].includes(action)) {
       return new Response(JSON.stringify({ error: 'Invalid action' }), {
@@ -33,9 +32,12 @@ export async function onRequest(context) {
       })
     }
 
+    // 转换时间戳为可读格式
+    const created_at = new Date(timestamp).toISOString().replace('T', ' ').slice(0, 19)
+
     await env.DB.prepare(
-      'INSERT INTO usage_logs (timestamp, action, item_count, result) VALUES (?, ?, ?, ?)'
-    ).bind(timestamp, action, count || 0, result || 'unknown').run()
+      'INSERT INTO usage_logs (created_at, action, item_count, result, device_name) VALUES (?, ?, ?, ?, ?)'
+    ).bind(created_at, action, count || 0, result || 'unknown', device_name || 'unknown').run()
 
     return new Response(JSON.stringify({ ok: true }), {
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
