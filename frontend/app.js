@@ -5,7 +5,7 @@ const CONFIG_KEY = 'eic_config'
 const CONFIG_MAX_AGE = 7 * 24 * 60 * 60 * 1000  // 7 天
 
 // Cloudflare Worker 日志地址（部署后替换为实际 URL）
-const LOG_URL = 'https://ecommerce-image-classifier-web.nizizoyifeh336.workers.dev/log'
+const LOG_URL = 'https://ecommerce-image-logger.nizizoyifeh336.workers.dev/log'
 
 function loadConfig() {
   try {
