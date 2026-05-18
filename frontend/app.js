@@ -319,13 +319,13 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
 
         const row = batchRows[j]
         const imageUrl = String(row['链接'] || '').trim()
-        const label = row['款号'] || ''
+        const label = row['商品编码'] || ''
         const spu = row['SPU'] || ''
         const skc = row['SKC'] || ''
         const skuid = row['SKUID'] || ''
 
         if (!imageUrl) {
-          results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 链接为空' })
+          results.push({ '商品编码': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 链接为空' })
           failCount++
           continue
         }
@@ -335,13 +335,13 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
           if (!resp.ok) {
             const data = await resp.json()
             const msg = data.error?.message || data.error || '识别失败'
-            results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': `失败: ${msg}` })
+            results.push({ '商品编码': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': `失败: ${msg}` })
             failCount++
           } else {
             const data = await resp.json()
             const answer = data.choices?.[0]?.message?.content?.trim() || ''
             const itemLabel = answer.includes('模特') ? '模特图' : '静态图'
-            results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': itemLabel, '处理状态': '成功' })
+            results.push({ '商品编码': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': itemLabel, '处理状态': '成功' })
             successCount++
           }
         } catch (e) {
@@ -350,7 +350,7 @@ document.getElementById('batch-btn').addEventListener('click', async () => {
             logUsage('batch', i + j, 'error')
             return
           }
-          results.push({ '款号': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 网络错误' })
+          results.push({ '商品编码': label, 'SPU': spu, 'SKC': skc, 'SKUID': skuid, '链接': imageUrl, '识别结果': '', '处理状态': '失败: 网络错误' })
           failCount++
         }
 
